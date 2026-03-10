@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Slideshow</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: #0f0f0f;
+    color: #e0e0e0;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    user-select: none;
+  }
+
+  #viewer {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+    overflow: hidden;
+    cursor: pointer;
+  }
+
+  #viewer img {
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: contain;
+    transition: opacity 0.4s ease;
+  }
+
+  #viewer img.loading { opacity: 0; }
+
+  #counter {
+    position: absolute;
+    top: 14px;
+    right: 18px;
+    font-size: 13px;
+    color: #888;
+    background: rgba(0,0,0,0.5);
+    padding: 4px 10px;
+    border-radius: 6px;
+  }
+
+  #filename {
+    position: absolute;
+    bottom: 14px;
+    left: 50%;
+    transform: translateX(-50%);
+    font-size: 12px;
+    color: #666;
+    background: rgba(0,0,0,0.5);
+    padding: 4px 12px;
+    border-radius: 6px;
+    max-width: 80%;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .nav-btn {
+    position: absolute;
+    top: 50%;
+    transform: translateY(-50%);
+    background: rgba(255,255,255,0.08);
+    border: none;
+    color: #ccc;
+    font-size: 28px;
+    width: 48px;
+    height: 72px;
+    border-radius: 8px;
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 0.2s;
+    z-index: 2;
+  }
+  #viewer:hover .nav-btn { opacity: 1; }
+  .nav-btn:hover { background: rgba(255,255,255,0.15); }
+  #prev-btn { left: 12px; }
+  #next-btn { right: 12px; }
+
+  #controls {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 18px;
+    padding: 12px 20px;
+    background: #1a1a1a;
+    border-top: 1px solid #2a2a2a;
+    flex-shrink: 0;
+  }
+
+  #controls button {
+    background: #2a2a2a;
+    border: 1px solid #3a3a3a;
+    color: #e0e0e0;
+    font-size: 14px;
+    padding: 7px 18px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: background 0.15s;
+    min-width: 90px;
+  }
+  #controls button:hover { background: #3a3a3a; }
+  #controls button.active { background: #1d6fb5; border-color: #2980d6; }
+
+  .speed-group {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    color: #aaa;
+  }
+
+  #speed-slider {
+    width: 120px;
+    accent-color: #1d6fb5;
+  }
+
+  #progress-bar {
+    height: 3px;
+    background: #2a2a2a;
+    flex-shrink: 0;
+  }
+  #progress-fill {
+    height: 100%;
+    background: #1d6fb5;
+    width: 0%;
+    transition: width 0.3s linear;
+  }
+
+  #drop-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(15,15,15,0.92);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    z-index: 100;
+    font-size: 20px;
+    color: #888;
+    border: 3px dashed #444;
+    margin: 20px;
+    border-radius: 16px;
+  }
+  #drop-overlay.visible { display: flex; }
+
+  #empty-state {
+    text-align: center;
+    color: #555;
+    font-size: 15px;
+    line-height: 2;
+  }
+  #empty-state span { font-size: 48px; display: block; margin-bottom: 8px; }
+</style>
+</head>
+<body>
+
+<div id="viewer">
+  <div id="empty-state">
+    <span>🖼</span>
+    Loading images from server...
+  </div>
+  <img id="slide" style="display:none" />
+  <div id="counter"></div>
+  <div id="filename"></div>
+  <button class="nav-btn" id="prev-btn">‹</button>
+  <button class="nav-btn" id="next-btn">›</button>
+</div>
+
+<div id="progress-bar"><div id="progress-fill"></div></div>
+
+<div id="controls">
+  <button id="prev-ctrl">← Prev</button>
+  <button id="play-btn" class="active">⏸ Pause</button>
+  <button id="next-ctrl">Next →</button>
+  <div class="speed-group">
+    <label for="speed-slider">Speed:</label>
+    <input type="range" id="speed-slider" min="0.5" max="15" step="0.5" value="3">
+    <span id="speed-val">3s</span>
+  </div>
+</div>
+
+<div id="drop-overlay">Drop images here to add them</div>
+
+<script>
+const IMAGE_DIR = '/images/';
+const IMG_EXT = new Set(['jpg','jpeg','png','gif','webp','bmp','svg','avif','tiff']);
+
+let images = [];
+let current = 0;
+let playing = true;
+let interval = 3;
+let timer = null;
+
+const slideEl    = document.getElementById('slide');
+const counterEl  = document.getElementById('counter');
+const filenameEl = document.getElementById('filename');
+const playBtn    = document.getElementById('play-btn');
+const speedSlider = document.getElementById('speed-slider');
+const speedVal   = document.getElementById('speed-val');
+const progressFill = document.getElementById('progress-fill');
+const emptyState = document.getElementById('empty-state');
+
+async function fetchImageList() {
+  try {
+    const res = await fetch(IMAGE_DIR);
+    const listing = await res.json();
+    return listing
+      .filter(f => f.type === 'file' && IMG_EXT.has(f.name.split('.').pop().toLowerCase()))
+      .map(f => f.name)
+      .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  } catch (e) {
+    console.error('Failed to fetch image list:', e);
+    emptyState.innerHTML = '<span>⚠️</span>Could not reach the image server.<br>Make sure nginx is running.';
+    return [];
+  }
+}
+
+function showImage(index) {
+  if (images.length === 0) return;
+  current = ((index % images.length) + images.length) % images.length;
+  const img = slideEl;
+  img.classList.add('loading');
+  img.onload = () => img.classList.remove('loading');
+  img.src = IMAGE_DIR + encodeURIComponent(images[current]);
+  img.style.display = 'block';
+  emptyState.style.display = 'none';
+  counterEl.textContent = `${current + 1} / ${images.length}`;
+  filenameEl.textContent = images[current];
+  progressFill.style.width = ((current + 1) / images.length * 100) + '%';
+}
+
+function next() { showImage(current + 1); }
+function prev() { showImage(current - 1); }
+
+function startTimer() {
+  stopTimer();
+  if (playing && images.length > 1) {
+    timer = setInterval(next, interval * 1000);
+  }
+}
+
+function stopTimer() {
+  if (timer) { clearInterval(timer); timer = null; }
+}
+
+function togglePlay() {
+  playing = !playing;
+  playBtn.textContent = playing ? '⏸ Pause' : '▶ Play';
+  playBtn.classList.toggle('active', playing);
+  if (playing) startTimer(); else stopTimer();
+}
+
+playBtn.addEventListener('click', togglePlay);
+document.getElementById('prev-btn').addEventListener('click', () => { prev(); startTimer(); });
+document.getElementById('next-btn').addEventListener('click', () => { next(); startTimer(); });
+document.getElementById('prev-ctrl').addEventListener('click', () => { prev(); startTimer(); });
+document.getElementById('next-ctrl').addEventListener('click', () => { next(); startTimer(); });
+
+speedSlider.addEventListener('input', () => {
+  interval = parseFloat(speedSlider.value);
+  speedVal.textContent = interval + 's';
+  startTimer();
+});
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'ArrowRight' || e.key === ' ') { e.preventDefault(); next(); startTimer(); }
+  if (e.key === 'ArrowLeft') { prev(); startTimer(); }
+  if (e.key === 'p' || e.key === 'k') togglePlay();
+  if (e.key === 'f') toggleFullscreen();
+});
+
+function toggleFullscreen() {
+  if (!document.fullscreenElement) document.documentElement.requestFullscreen();
+  else document.exitFullscreen();
+}
+
+document.getElementById('viewer').addEventListener('dblclick', toggleFullscreen);
+
+// Drag-and-drop: accept local files as a convenience fallback
+const dropOverlay = document.getElementById('drop-overlay');
+let dragCounter = 0;
+document.addEventListener('dragenter', (e) => { e.preventDefault(); dragCounter++; dropOverlay.classList.add('visible'); });
+document.addEventListener('dragleave', (e) => { e.preventDefault(); dragCounter--; if (dragCounter <= 0) { dragCounter = 0; dropOverlay.classList.remove('visible'); }});
+document.addEventListener('dragover', (e) => e.preventDefault());
+document.addEventListener('drop', (e) => {
+  e.preventDefault();
+  dragCounter = 0;
+  dropOverlay.classList.remove('visible');
+  const files = [...e.dataTransfer.files].filter(f => f.type.startsWith('image/'));
+  if (files.length === 0) return;
+  const newUrls = files.map(f => URL.createObjectURL(f));
+  const newNames = files.map(f => f.name);
+  images.push(...newNames);
+  localBlobs = localBlobs || {};
+  newNames.forEach((n, i) => localBlobs[n] = newUrls[i]);
+  showImage(images.length - newNames.length);
+  startTimer();
+});
+
+let localBlobs = {};
+const origShowImage = showImage;
+showImage = function(index) {
+  if (images.length === 0) return;
+  current = ((index % images.length) + images.length) % images.length;
+  const name = images[current];
+  const img = slideEl;
+  img.classList.add('loading');
+  img.onload = () => img.classList.remove('loading');
+  img.src = localBlobs[name] || (IMAGE_DIR + encodeURIComponent(name));
+  img.style.display = 'block';
+  emptyState.style.display = 'none';
+  counterEl.textContent = `${current + 1} / ${images.length}`;
+  filenameEl.textContent = name;
+  progressFill.style.width = ((current + 1) / images.length * 100) + '%';
+};
+
+(async () => {
+  images = await fetchImageList();
+  if (images.length > 0) {
+    showImage(0);
+    startTimer();
+  } else {
+    emptyState.innerHTML = '<span>🖼</span>No images found.<br>Put image files in the <b>images/</b> folder and restart nginx.';
+  }
+})();
+</script>
+</body>
+</html>
