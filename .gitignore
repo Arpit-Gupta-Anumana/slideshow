@@ -1,3 +1,4 @@
 images/*
 !images/.gitkeep
+image_gen/
 .DS_Store

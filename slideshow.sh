@@ -4,9 +4,11 @@
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 CONF="/tmp/slideshow-nginx.conf"
 PID_FILE="/tmp/slideshow-nginx.pid"
+ADB_PID_FILE="/tmp/slideshow-adb-helper.pid"
+IMAGE_DIR="${SLIDESHOW_IMAGES:-$SCRIPT_DIR/images}"
 PORT=8899
+ADB_PORT=8900
 
-# Find mime.types across common nginx install locations
 find_mime_types() {
   for f in /opt/homebrew/etc/nginx/mime.types /usr/local/etc/nginx/mime.types /etc/nginx/mime.types; do
     [ -f "$f" ] && echo "$f" && return
@@ -41,14 +43,30 @@ http {
         }
 
         location /images/ {
-            alias $SCRIPT_DIR/images/;
+            alias $IMAGE_DIR/;
             autoindex on;
             autoindex_format json;
             client_max_body_size 50m;
         }
+
+        location /api/ {
+            proxy_pass http://127.0.0.1:$ADB_PORT/;
+        }
     }
 }
 EOF
+}
+
+start_adb_helper() {
+  python3 "$SCRIPT_DIR/adb_helper.py" &
+  echo $! > "$ADB_PID_FILE"
+}
+
+stop_adb_helper() {
+  if [ -f "$ADB_PID_FILE" ]; then
+    kill "$(cat "$ADB_PID_FILE")" 2>/dev/null
+    rm -f "$ADB_PID_FILE"
+  fi
 }
 
 case "${1:-start}" in
@@ -59,26 +77,32 @@ case "${1:-start}" in
       exit 0
     fi
     echo "Starting slideshow server..."
+    start_adb_helper
     generate_conf
     nginx -c "$CONF" -g "pid $PID_FILE;"
     if [ $? -eq 0 ]; then
       echo "Running on http://localhost:$PORT"
-      echo "Put your images in: $SCRIPT_DIR/images/"
+      echo "Serving images from: $IMAGE_DIR"
       echo ""
       echo "Controls:"
       echo "  Space/→  Next image"
       echo "  ←        Previous image"
-      echo "  P/K      Pause / Resume"
-      echo "  Dbl-click  Fullscreen"
+      echo "  P        Pause"
+      echo "  R        Resume"
+      echo "  F        Fullscreen"
+      echo ""
+      echo "Each image change sends: adb shell input keyevent 27"
       echo ""
       echo "Stop with: $0 stop"
     else
+      stop_adb_helper
       echo "Failed to start. Is port $PORT in use?"
       exit 1
     fi
     ;;
 
   stop)
+    stop_adb_helper
     if [ -f "$PID_FILE" ]; then
       nginx -c "$CONF" -g "pid $PID_FILE;" -s stop 2>/dev/null
       rm -f "$PID_FILE" "$CONF"
