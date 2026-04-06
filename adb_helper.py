@@ -12,6 +12,11 @@ CAMERA_DIR = "/sdcard/DCIM/Camera"
 RENAME_DIR = "/sdcard/DCIM/Slideshow"
 CAPTURE_WAIT = 4  # seconds to wait for the photo to be saved
 
+
+def _capture_suffix():
+    """Appended as _<suffix> before the extension (default: beach). Set empty to disable."""
+    return os.environ.get("SLIDESHOW_CAPTURE_SUFFIX", "beach").strip()
+
 def get_latest_photo():
     """Return the filename of the most recent file in the camera folder."""
     result = subprocess.run(
@@ -39,7 +44,8 @@ def capture_and_rename(target_name):
 
     ext = os.path.splitext(after)[1]
     base = os.path.splitext(target_name)[0]
-    new_name = base + ext
+    suf = _capture_suffix()
+    new_name = f"{base}_{suf}{ext}" if suf else base + ext
 
     subprocess.run(
         ["adb", "shell", f"mkdir -p {RENAME_DIR}"],

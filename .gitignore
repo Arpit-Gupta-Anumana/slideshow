@@ -2,3 +2,6 @@ images/*
 !images/.gitkeep
 image_gen/
 .DS_Store
+
+# Optional local Android platform-tools (copy here or use brew android-platform-tools)
+.tools/

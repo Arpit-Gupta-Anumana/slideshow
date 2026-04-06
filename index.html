@@ -155,9 +155,9 @@ function fireAdbTrigger(filename) {
   }).catch(() => {});
 }
 
-function showImage(index) {
+function applySlide(index) {
   if (images.length === 0) return;
-  current = ((index % images.length) + images.length) % images.length;
+  current = Math.max(0, Math.min(images.length - 1, index));
   const img = slideEl;
   img.classList.add('loading');
   img.onload = () => img.classList.remove('loading');
@@ -168,13 +168,29 @@ function showImage(index) {
   fireAdbTrigger(images[current]);
 }
 
-function next() { showImage(current + 1); }
-function prev() { showImage(current - 1); }
+function advanceOrFinish() {
+  if (images.length === 0) return;
+  if (current >= images.length - 1) {
+    stopTimer();
+    playing = false;
+    flashStatus('✓ Slideshow complete');
+    return;
+  }
+  applySlide(current + 1);
+}
+
+function next() {
+  if (current < images.length - 1) applySlide(current + 1);
+}
+
+function prev() {
+  if (current > 0) applySlide(current - 1);
+}
 
 function startTimer() {
   stopTimer();
-  if (playing && images.length > 1) {
-    timer = setInterval(next, interval * 1000);
+  if (playing && images.length > 0) {
+    timer = setInterval(advanceOrFinish, interval * 1000);
   }
 }
 
@@ -217,7 +233,7 @@ document.getElementById('viewer').addEventListener('dblclick', toggleFullscreen)
 (async () => {
   images = await fetchImageList();
   if (images.length > 0) {
-    showImage(0);
+    applySlide(0);
     startTimer();
   } else {
     emptyState.innerHTML = '<span>🖼</span>No images found.<br>Put image files in the <b>images/</b> folder and restart nginx.';

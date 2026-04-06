@@ -9,6 +9,14 @@ IMAGE_DIR="${SLIDESHOW_IMAGES:-$SCRIPT_DIR/images}"
 PORT=8899
 ADB_PORT=8900
 
+# Phone saves as <slide_stem>_beach.<ext> (override or clear: SLIDESHOW_CAPTURE_SUFFIX=)
+export SLIDESHOW_CAPTURE_SUFFIX="${SLIDESHOW_CAPTURE_SUFFIX:-beach}"
+
+# Bundled platform-tools (adb) — not on PATH by default
+if [ -x "$SCRIPT_DIR/.tools/platform-tools/adb" ]; then
+  export PATH="$SCRIPT_DIR/.tools/platform-tools:$PATH"
+fi
+
 find_mime_types() {
   for f in /opt/homebrew/etc/nginx/mime.types /usr/local/etc/nginx/mime.types /etc/nginx/mime.types; do
     [ -f "$f" ] && echo "$f" && return
@@ -83,6 +91,11 @@ case "${1:-start}" in
     if [ $? -eq 0 ]; then
       echo "Running on http://localhost:$PORT"
       echo "Serving images from: $IMAGE_DIR"
+      if [ -n "$SLIDESHOW_CAPTURE_SUFFIX" ]; then
+        echo "Phone capture suffix: _$SLIDESHOW_CAPTURE_SUFFIX"
+      else
+        echo "Phone capture suffix: (none)"
+      fi
       echo ""
       echo "Controls:"
       echo "  Space/→  Next image"
