@@ -53,7 +53,7 @@
     left: 50%;
     transform: translate(-50%, -50%);
     font-family: -apple-system, BlinkMacSystemFont, sans-serif;
-    font-size: 24px;
+    font-size: 22px;
     color: #fff;
     background: rgba(0,0,0,0.6);
     padding: 12px 28px;
@@ -62,6 +62,8 @@
     transition: opacity 0.3s;
     pointer-events: none;
     z-index: 10;
+    max-width: 80%;
+    text-align: center;
   }
   #status.show { opacity: 1; }
 
@@ -117,19 +119,35 @@ const IMG_EXT = new Set(['jpg','jpeg','png','gif','webp','bmp','svg','avif','tif
 let images = [];
 let current = 0;
 let playing = true;
+let finished = false;
 let interval = 3;
-let timer = null;
+let autoTimer = null;
 
 const slideEl   = document.getElementById('slide');
 const counterEl = document.getElementById('counter');
 const statusEl  = document.getElementById('status');
 const emptyState = document.getElementById('empty-state');
 
-function flashStatus(msg) {
+function numericStem(name) {
+  const base = name.replace(/\.[^.]+$/i, '');
+  const m = base.match(/^(\d+)/);
+  return m ? parseInt(m[1], 10) : NaN;
+}
+
+function findStartIndex(n) {
+  if (!Number.isFinite(n)) return 0;
+  for (let i = 0; i < images.length; i++) {
+    const v = numericStem(images[i]);
+    if (Number.isFinite(v) && v >= n) return i;
+  }
+  return 0;
+}
+
+function flashStatus(msg, ms) {
   statusEl.textContent = msg;
   statusEl.classList.add('show');
   clearTimeout(statusEl._t);
-  statusEl._t = setTimeout(() => statusEl.classList.remove('show'), 800);
+  statusEl._t = setTimeout(() => statusEl.classList.remove('show'), ms || 800);
 }
 
 async function fetchImageList() {
@@ -147,16 +165,30 @@ async function fetchImageList() {
   }
 }
 
-function fireAdbTrigger(filename) {
-  fetch('/api/trigger', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name: filename })
-  }).catch(() => {});
+async function fireAdbTrigger(filename) {
+  try {
+    const res = await fetch('/api/trigger', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: filename })
+    });
+    let data = {};
+    try { data = await res.json(); } catch (_) {}
+    if (!res.ok || data.ok === false) {
+      return { ok: false, error: data.error || `HTTP ${res.status}`, dest: data.dest };
+    }
+    return { ok: true, queued: data.queued || false, dest: data.dest, src: data.src };
+  } catch (e) {
+    return { ok: false, error: String(e) };
+  }
 }
 
-function applySlide(index) {
-  if (images.length === 0) return;
+function clearAutoTimer() {
+  if (autoTimer) { clearTimeout(autoTimer); autoTimer = null; }
+}
+
+async function showImage(index) {
+  if (images.length === 0) return true;
   current = Math.max(0, Math.min(images.length - 1, index));
   const img = slideEl;
   img.classList.add('loading');
@@ -165,59 +197,80 @@ function applySlide(index) {
   img.style.display = 'block';
   emptyState.style.display = 'none';
   counterEl.textContent = `${current + 1} / ${images.length}`;
-  fireAdbTrigger(images[current]);
-}
 
-function advanceOrFinish() {
-  if (images.length === 0) return;
-  if (current >= images.length - 1) {
-    stopTimer();
+  const cap = await fireAdbTrigger(images[current]);
+  if (!cap.ok) {
     playing = false;
-    flashStatus('✓ Slideshow complete');
-    return;
+    clearAutoTimer();
+    flashStatus(
+      `Capture failed: ${cap.error}. Check USB/camera/storage. Press R to resume.`,
+      10000
+    );
+    return false;
   }
-  applySlide(current + 1);
+  return true;
 }
 
-function next() {
-  if (current < images.length - 1) applySlide(current + 1);
+function endSlideshow() {
+  if (finished || images.length === 0) return;
+  finished = true;
+  playing = false;
+  clearAutoTimer();
+  counterEl.textContent = `${images.length} / ${images.length} — done`;
+  flashStatus('Slideshow finished — all images captured', 5000);
 }
 
-function prev() {
-  if (current > 0) applySlide(current - 1);
+function scheduleAuto() {
+  clearAutoTimer();
+  if (!playing || finished || images.length <= 1) return;
+  autoTimer = setTimeout(() => {
+    autoTimer = null;
+    void (async () => {
+      if (!playing || finished) return;
+      if (current >= images.length - 1) { endSlideshow(); return; }
+      const ok = await showImage(current + 1);
+      if (ok) scheduleAuto();
+    })();
+  }, interval * 1000);
 }
 
-function startTimer() {
-  stopTimer();
-  if (playing && images.length > 0) {
-    timer = setInterval(advanceOrFinish, interval * 1000);
-  }
+async function goNext() {
+  if (images.length === 0 || finished) return;
+  clearAutoTimer();
+  if (current >= images.length - 1) { endSlideshow(); return; }
+  const ok = await showImage(current + 1);
+  if (ok) scheduleAuto();
 }
 
-function stopTimer() {
-  if (timer) { clearInterval(timer); timer = null; }
+async function goPrev() {
+  if (images.length === 0) return;
+  if (finished) finished = false;
+  clearAutoTimer();
+  if (current <= 0) return;
+  const ok = await showImage(current - 1);
+  if (ok) scheduleAuto();
 }
 
 function pause() {
   if (!playing) return;
   playing = false;
-  stopTimer();
+  clearAutoTimer();
   flashStatus('⏸ Paused');
 }
 
 function resume() {
-  if (playing) return;
+  if (playing || finished) return;
   playing = true;
-  startTimer();
+  scheduleAuto();
   flashStatus('▶ Playing');
 }
 
-document.getElementById('prev-btn').addEventListener('click', () => { prev(); startTimer(); });
-document.getElementById('next-btn').addEventListener('click', () => { next(); startTimer(); });
+document.getElementById('prev-btn').addEventListener('click', () => void goPrev());
+document.getElementById('next-btn').addEventListener('click', () => void goNext());
 
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'ArrowRight' || e.key === ' ') { e.preventDefault(); next(); startTimer(); }
-  if (e.key === 'ArrowLeft') { prev(); startTimer(); }
+  if (e.key === 'ArrowRight' || e.key === ' ') { e.preventDefault(); void goNext(); }
+  if (e.key === 'ArrowLeft') { void goPrev(); }
   if (e.key === 'p' || e.key === 'P') pause();
   if (e.key === 'r' || e.key === 'R') resume();
   if (e.key === 'f' || e.key === 'F') toggleFullscreen();
@@ -233,8 +286,19 @@ document.getElementById('viewer').addEventListener('dblclick', toggleFullscreen)
 (async () => {
   images = await fetchImageList();
   if (images.length > 0) {
-    applySlide(0);
-    startTimer();
+    const raw = new URLSearchParams(location.search).get('start');
+    const startNum = raw != null && raw !== '' ? parseInt(raw, 10) : NaN;
+    const idx = findStartIndex(startNum);
+    finished = false;
+    const ok = await showImage(idx);
+    if (Number.isFinite(startNum) && idx > 0) {
+      flashStatus(`Resuming at ${images[idx]}`, 2000);
+    }
+    if (images.length === 1) {
+      if (ok) setTimeout(() => endSlideshow(), interval * 1000);
+    } else if (ok) {
+      scheduleAuto();
+    }
   } else {
     emptyState.innerHTML = '<span>🖼</span>No images found.<br>Put image files in the <b>images/</b> folder and restart nginx.';
   }

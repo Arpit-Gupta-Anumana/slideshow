@@ -1,24 +1,46 @@
 #!/bin/bash
-# Slideshow server manager
+# Slideshow server manager (unified)
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 CONF="/tmp/slideshow-nginx.conf"
 PID_FILE="/tmp/slideshow-nginx.pid"
 ADB_PID_FILE="/tmp/slideshow-adb-helper.pid"
+LOG_DIR="${LOG_DIR:-/tmp}"
+
+# ── Image source ──
 IMAGE_DIR="${SLIDESHOW_IMAGES:-$SCRIPT_DIR/images}"
+
+# ── Capture naming ──
+export SLIDESHOW_FOLDER_LABEL="${SLIDESHOW_FOLDER_LABEL:-}"
+export SLIDESHOW_CAPTURE_SUFFIX="${SLIDESHOW_CAPTURE_SUFFIX:-}"
+
+# ── Capture mode: 1 = browser waits for phone (recommended), 0 = fire-and-forget ──
+export SLIDESHOW_SYNC_CAPTURE="${SLIDESHOW_SYNC_CAPTURE:-1}"
+
+# ── Local pull destination (empty = don't pull) ──
+CAPTURE_DEST="${SLIDESHOW_CAPTURE:-}"
+export CAPTURE_DIR="$CAPTURE_DEST"
+
+# ── Remote rsync (empty = disabled) ──
+export REMOTE_HOST="${REMOTE_HOST:-}"
+export REMOTE_PATH="${REMOTE_PATH:-}"
+export SSH_KEY="${SSH_KEY:-$HOME/.ssh/id_ed25519}"
+export BATCH_SIZE="${BATCH_SIZE:-1000}"
+
+# ── Logging ──
+export LOG_DIR="${LOG_DIR}"
+export SLIDESHOW_CAPTURE_LOG="${SLIDESHOW_CAPTURE_LOG:-$LOG_DIR/capture_audit.jsonl}"
+
 PORT=8899
 ADB_PORT=8900
 
-# Phone saves as <slide_stem>_beach.<ext> (override or clear: SLIDESHOW_CAPTURE_SUFFIX=)
-export SLIDESHOW_CAPTURE_SUFFIX="${SLIDESHOW_CAPTURE_SUFFIX:-beach}"
-
-# Bundled platform-tools (adb) — not on PATH by default
+# Bundled adb support
 if [ -x "$SCRIPT_DIR/.tools/platform-tools/adb" ]; then
   export PATH="$SCRIPT_DIR/.tools/platform-tools:$PATH"
 fi
 
 find_mime_types() {
-  for f in /opt/homebrew/etc/nginx/mime.types /usr/local/etc/nginx/mime.types /etc/nginx/mime.types; do
+  for f in /opt/homebrew/etc/nginx/mime.types /usr/local/etc/nginx/mime.types /etc/nginx/mime.types /usr/share/nginx/mime.types; do
     [ -f "$f" ] && echo "$f" && return
   done
   echo "ERROR: mime.types not found. Is nginx installed?" >&2
@@ -27,8 +49,9 @@ find_mime_types() {
 
 generate_conf() {
   local mime_path
-  mime_path="$(find_mime_types)"
+  mime_path="$(find_mime_types)" || exit 1
   cat > "$CONF" <<EOF
+error_log $LOG_DIR/slideshow-nginx-error.log;
 worker_processes 1;
 
 events {
@@ -39,6 +62,8 @@ http {
     include       $mime_path;
     default_type  application/octet-stream;
     sendfile      on;
+    access_log    $LOG_DIR/slideshow-nginx-access.log;
+    error_log     $LOG_DIR/slideshow-nginx-error.log;
 
     server {
         listen $PORT;
@@ -51,7 +76,7 @@ http {
         }
 
         location /images/ {
-            alias $IMAGE_DIR/;
+            alias "$IMAGE_DIR/";
             autoindex on;
             autoindex_format json;
             client_max_body_size 50m;
@@ -87,14 +112,28 @@ case "${1:-start}" in
     echo "Starting slideshow server..."
     start_adb_helper
     generate_conf
-    nginx -c "$CONF" -g "pid $PID_FILE;"
+    nginx -c "$CONF" -g "pid $PID_FILE; error_log $LOG_DIR/slideshow-nginx-error.log;"
     if [ $? -eq 0 ]; then
+      echo ""
       echo "Running on http://localhost:$PORT"
       echo "Serving images from: $IMAGE_DIR"
-      if [ -n "$SLIDESHOW_CAPTURE_SUFFIX" ]; then
-        echo "Phone capture suffix: _$SLIDESHOW_CAPTURE_SUFFIX"
+      echo ""
+      # Naming info
+      NAME_PARTS="<stem>"
+      [ -n "$SLIDESHOW_FOLDER_LABEL" ] && NAME_PARTS="${NAME_PARTS}_${SLIDESHOW_FOLDER_LABEL}"
+      [ -n "$SLIDESHOW_CAPTURE_SUFFIX" ] && NAME_PARTS="${NAME_PARTS}_${SLIDESHOW_CAPTURE_SUFFIX}"
+      echo "Rename pattern: ${NAME_PARTS}<ext>"
+      echo "Capture mode: $([ "$SLIDESHOW_SYNC_CAPTURE" = "1" ] && echo 'sync (browser waits)' || echo 'async (fire-and-forget)')"
+      # Pull/sync info
+      if [ -n "$CAPTURE_DEST" ]; then
+        echo "Pull to local: $CAPTURE_DEST"
       else
-        echo "Phone capture suffix: (none)"
+        echo "Pull to local: OFF"
+      fi
+      if [ -n "$REMOTE_HOST" ] && [ -n "$REMOTE_PATH" ]; then
+        echo "Remote sync: every $BATCH_SIZE files -> $REMOTE_HOST:$REMOTE_PATH"
+      else
+        echo "Remote sync: OFF"
       fi
       echo ""
       echo "Controls:"
@@ -104,7 +143,9 @@ case "${1:-start}" in
       echo "  R        Resume"
       echo "  F        Fullscreen"
       echo ""
-      echo "Each image change sends: adb shell input keyevent 27"
+      echo "Resume from image: http://localhost:$PORT/?start=<number>"
+      echo "Force sync:        curl -X POST http://localhost:$PORT/api/sync"
+      echo "View stats:        curl http://localhost:$PORT/api/stats"
       echo ""
       echo "Stop with: $0 stop"
     else
@@ -117,7 +158,7 @@ case "${1:-start}" in
   stop)
     stop_adb_helper
     if [ -f "$PID_FILE" ]; then
-      nginx -c "$CONF" -g "pid $PID_FILE;" -s stop 2>/dev/null
+      nginx -c "$CONF" -g "pid $PID_FILE; error_log $LOG_DIR/slideshow-nginx-error.log;" -s stop 2>/dev/null
       rm -f "$PID_FILE" "$CONF"
       echo "Stopped."
     else
