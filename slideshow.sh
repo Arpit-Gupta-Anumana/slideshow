@@ -6,6 +6,7 @@ CONF="/tmp/slideshow-nginx.conf"
 PID_FILE="/tmp/slideshow-nginx.pid"
 ADB_PID_FILE="/tmp/slideshow-adb-helper.pid"
 IMAGE_DIR="${SLIDESHOW_IMAGES:-$SCRIPT_DIR/images}"
+CAPTURE_DEST="${SLIDESHOW_CAPTURE:-$IMAGE_DIR/captured}"
 PORT=8899
 ADB_PORT=8900
 
@@ -58,7 +59,7 @@ EOF
 }
 
 start_adb_helper() {
-  python3 "$SCRIPT_DIR/adb_helper.py" &
+  CAPTURE_DIR="$CAPTURE_DEST" python3 "$SCRIPT_DIR/adb_helper.py" &
   echo $! > "$ADB_PID_FILE"
 }
 
@@ -92,6 +93,7 @@ case "${1:-start}" in
       echo "  F        Fullscreen"
       echo ""
       echo "Each image change sends: adb shell input keyevent 27"
+      echo "Captured photos pulled to: $CAPTURE_DEST"
       echo ""
       echo "Stop with: $0 stop"
     else
