@@ -94,7 +94,9 @@ case "${1:-start}" in
       echo ""
       echo "Each image change sends: adb shell input keyevent 27"
       echo "Captured photos pulled to: $CAPTURE_DEST"
+      echo "Remote sync: every ${BATCH_SIZE:-1000} files -> dev3-datastore"
       echo ""
+      echo "Force sync now:  curl -X POST http://localhost:$PORT/api/sync"
       echo "Stop with: $0 stop"
     else
       stop_adb_helper
