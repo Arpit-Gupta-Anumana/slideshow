@@ -117,13 +117,31 @@ const IMG_EXT = new Set(['jpg','jpeg','png','gif','webp','bmp','svg','avif','tif
 let images = [];
 let current = 0;
 let playing = true;
-let interval = 3;
+// Seconds between auto-advances. With ADB capture, use ≥6–8 so each shot can finish (one at a time).
+let interval = 6;
 let timer = null;
 
 const slideEl   = document.getElementById('slide');
 const counterEl = document.getElementById('counter');
 const statusEl  = document.getElementById('status');
 const emptyState = document.getElementById('empty-state');
+
+/** Leading digits in filename stem, e.g. 10751.jpg -> 10751 */
+function numericStem(name) {
+  const base = name.replace(/\.[^.]+$/i, '');
+  const m = base.match(/^(\d+)/);
+  return m ? parseInt(m[1], 10) : NaN;
+}
+
+/** First index where filename number >= n (sorted list). */
+function findStartIndex(n) {
+  if (!Number.isFinite(n)) return 0;
+  for (let i = 0; i < images.length; i++) {
+    const v = numericStem(images[i]);
+    if (Number.isFinite(v) && v >= n) return i;
+  }
+  return 0;
+}
 
 function flashStatus(msg) {
   statusEl.textContent = msg;
@@ -233,7 +251,13 @@ document.getElementById('viewer').addEventListener('dblclick', toggleFullscreen)
 (async () => {
   images = await fetchImageList();
   if (images.length > 0) {
-    applySlide(0);
+    const raw = new URLSearchParams(location.search).get('start');
+    const startNum = raw != null && raw !== '' ? parseInt(raw, 10) : NaN;
+    const idx = findStartIndex(startNum);
+    applySlide(idx);
+    if (Number.isFinite(startNum) && idx > 0) {
+      flashStatus(`Resuming at ${images[idx]}`);
+    }
     startTimer();
   } else {
     emptyState.innerHTML = '<span>🖼</span>No images found.<br>Put image files in the <b>images/</b> folder and restart nginx.';

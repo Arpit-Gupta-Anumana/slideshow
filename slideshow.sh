@@ -9,8 +9,8 @@ IMAGE_DIR="${SLIDESHOW_IMAGES:-$SCRIPT_DIR/images}"
 PORT=8899
 ADB_PORT=8900
 
-# Phone saves as <slide_stem>_beach.<ext> (override or clear: SLIDESHOW_CAPTURE_SUFFIX=)
-export SLIDESHOW_CAPTURE_SUFFIX="${SLIDESHOW_CAPTURE_SUFFIX:-beach}"
+# Phone saves as <slide_stem>_16k_moto_linear_dell.<ext> (override or clear: SLIDESHOW_CAPTURE_SUFFIX=)
+export SLIDESHOW_CAPTURE_SUFFIX="${SLIDESHOW_CAPTURE_SUFFIX:-16k_moto_linear_dell}"
 
 # Bundled platform-tools (adb) — not on PATH by default
 if [ -x "$SCRIPT_DIR/.tools/platform-tools/adb" ]; then
