@@ -5,3 +5,4 @@ image_gen/
 
 # Optional local Android platform-tools (copy here or use brew android-platform-tools)
 .tools/
+__pycache__/
